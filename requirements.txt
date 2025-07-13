@@ -1,0 +1,5 @@
+bm25s 
+mecab-python3 
+unidic-lite 
+watchdog 
+pdfminer.six
