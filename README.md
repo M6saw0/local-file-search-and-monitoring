@@ -261,7 +261,7 @@ pdfminer.six       # PDF text extraction
 
 ## License
 
-This project is created for educational purposes.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Contributing
 
