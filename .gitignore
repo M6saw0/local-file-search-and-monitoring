@@ -1,1 +1,11 @@
+.venv/
+.cursor/
+**/__pycache__/
+bk/
+sandbox/
+tests/
+logs/
+data/
+tmp/
+
 input/*
