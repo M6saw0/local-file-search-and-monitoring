@@ -266,12 +266,21 @@ class VectorRetriever(BaseRetriever, HybridBaseSystem):
             if not self.table:
                 return False
             
+            # 削除前のドキュメント数を取得
+            count_before = self.table.count_rows()
+            
             # ドキュメントIDに関連するすべてのチャンクを削除
             result = self.table.delete(f"doc_id = '{doc_id}'")
             
-            if result.num_deleted_rows > 0:
+            # 削除後のドキュメント数を取得
+            count_after = self.table.count_rows()
+            
+            # 削除されたドキュメント数を計算
+            deleted_count = count_before - count_after
+            
+            if deleted_count > 0:
                 self.document_count = max(0, self.document_count - 1)
-                self.logger.debug(f"ベクトル文書削除: {doc_id} ({result.num_deleted_rows}チャンク)")
+                self.logger.debug(f"ベクトル文書削除: {doc_id} ({deleted_count}チャンク)")
                 return True
             else:
                 self.logger.debug(f"削除対象のベクトル文書が見つかりません: {doc_id}")

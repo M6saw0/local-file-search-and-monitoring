@@ -99,6 +99,14 @@ SEARCH_TIMEOUT = 30.0  # 検索タイムアウト（秒）
 MAX_CANDIDATES_PER_RETRIEVER = 20  # 各検索エンジンから取得する最大候補数
 FINAL_RESULT_COUNT = 10  # 最終的に返す検索結果数
 
+# 検索キャッシュ設定
+ENABLE_RESULT_CACHE = True  # 検索結果キャッシュを有効にするかどうか
+RESULT_CACHE_SIZE = 100  # キャッシュする検索結果の最大数
+
+# インデックス更新監視設定  
+ENABLE_INDEX_AUTO_RELOAD = True  # インデックス自動再読み込みを有効にするかどうか
+INDEX_UPDATE_CHECK_INTERVAL = 5.0  # インデックス更新チェック間隔（秒）
+
 # ==========================================
 # リランカー設定
 # ==========================================
