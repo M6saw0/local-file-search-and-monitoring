@@ -1,49 +1,25 @@
 # Hybrid Search System Requirements
-# ハイブリッド検索システム用依存関係
 
 # Core ML/AI Libraries
-# 機械学習・AI基盤ライブラリ
 torch>=2.0.0
 transformers>=4.20.0
 numpy>=1.21.0
 
 # Search Engines
-# 検索エンジン
 bm25s>=0.1.0
-lancedb>=0.3.0
+lancedb>=0.24.1
 
 # Japanese Language Processing  
-# 日本語処理
 MeCab-python3>=1.0.0
 
 # File Processing
-# ファイル処理
 pdfminer.six>=20211012
 pandas>=1.5.0
 
 # File System Monitoring
-# ファイルシステム監視
 watchdog>=2.1.0
 
-# Development and Testing (Optional)
-# 開発・テスト用（オプション）
-pytest>=7.0.0
-pytest-cov>=4.0.0
-black>=22.0.0
-flake8>=5.0.0
-mypy>=1.0.0
 
 # Additional utilities
-# 追加ユーティリティ
-tqdm>=4.64.0  # Progress bars for batch processing / バッチ処理用プログレスバー
-typing-extensions>=4.0.0  # Type hints support / 型ヒントサポート
-
-# Optional: Jupyter notebook support
-# オプション：Jupyter notebook サポート
-# jupyter>=1.0.0
-# ipywidgets>=8.0.0
-
-# Optional: Visualization
-# オプション：可視化
-# matplotlib>=3.5.0
-# seaborn>=0.11.0 
+tqdm>=4.64.0  # Progress bars for batch processing
+typing-extensions>=4.0.0  # Type hints support

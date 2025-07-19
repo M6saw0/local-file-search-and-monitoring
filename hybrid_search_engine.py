@@ -8,7 +8,7 @@ BM25とベクトル検索を組み合わせ、RRFリランカーで結果を統�
 import time
 import threading
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Callable
 import concurrent.futures
 
 # 内部モジュール
@@ -17,6 +17,54 @@ from rerankers.base_reranker import BaseReranker, RetrievalResult, combine_resul
 from rerankers.rrf_reranker import RRFReranker
 from hybrid_index_manager import HybridIndexManager
 import core.hybrid_config as config
+
+
+class IndexUpdateNotifier:
+    """
+    インデックス更新通知システム
+    
+    インデックス管理システムから検索エンジンへの更新通知を管理します。
+    """
+    
+    def __init__(self):
+        self.listeners: List[Callable[[], None]] = []
+        self.lock = threading.Lock()
+    
+    def add_listener(self, listener: Callable[[], None]) -> None:
+        """
+        更新リスナーを追加します。
+        
+        Args:
+            listener (Callable): 更新通知時に呼び出される関数
+        """
+        with self.lock:
+            self.listeners.append(listener)
+    
+    def remove_listener(self, listener: Callable[[], None]) -> None:
+        """
+        更新リスナーを削除します。
+        
+        Args:
+            listener (Callable): 削除するリスナー
+        """
+        with self.lock:
+            if listener in self.listeners:
+                self.listeners.remove(listener)
+    
+    def notify_update(self, retriever_name: str) -> None:
+        """
+        インデックス更新を通知します。
+        
+        Args:
+            retriever_name (str): 更新されたリトリーバー名
+        """
+        with self.lock:
+            for listener in self.listeners:
+                try:
+                    listener()
+                except Exception as e:
+                    # リスナー実行エラーは個別に処理
+                    print(f"更新リスナーエラー: {e}")
 
 
 class HybridSearchEngine(HybridBaseSystem):
@@ -28,6 +76,7 @@ class HybridSearchEngine(HybridBaseSystem):
     - RRFリランカーによる結果統合
     - インタラクティブな検索インターフェース
     - 検索結果の詳細分析
+    - インデックス自動更新検知・再読み込み
     """
     
     def __init__(self, index_manager: Optional[HybridIndexManager] = None):
@@ -53,14 +102,197 @@ class HybridSearchEngine(HybridBaseSystem):
             'vector_searches': 0,
             'hybrid_searches': 0,
             'average_response_time': 0.0,
-            'last_search_time': None
+            'last_search_time': None,
+            'index_reload_count': 0
         }
         
         # 検索結果キャッシュ
         self.result_cache = {}
         self.cache_lock = threading.Lock()
         
+        # インデックス更新監視システム
+        self.update_notifier = IndexUpdateNotifier()
+        self.last_index_check_time = {}  # {retriever_name: timestamp}
+        self.auto_reload_enabled = True
+        
+        # インデックス更新チェック設定
+        self.index_check_interval = 5.0  # 秒
+        self.last_global_check_time = 0
+        
+        # インデックス管理システムに更新通知リスナーを登録
+        self._setup_index_update_monitoring()
+        
         self.logger.info("HybridSearchEngine初期化完了")
+    
+    def _setup_index_update_monitoring(self) -> None:
+        """
+        インデックス更新監視システムをセットアップします。
+        """
+        try:
+            # インデックス管理システムに通知機能があるかチェック
+            if hasattr(self.index_manager, 'set_update_notifier'):
+                self.index_manager.set_update_notifier(self.update_notifier)
+                self.logger.info("🔔 インデックス更新通知システムを設定しました")
+            else:
+                self.logger.info("📊 定期チェック方式でインデックス更新を監視します")
+            
+            # 自動再読み込みリスナーを追加
+            self.update_notifier.add_listener(self._handle_index_update)
+            
+        except Exception as e:
+            self.logger.error(f"インデックス更新監視設定エラー: {e}")
+    
+    def _handle_index_update(self) -> None:
+        """
+        インデックス更新通知を処理します。
+        """
+        if not self.auto_reload_enabled:
+            return
+            
+        try:
+            self.logger.info("🔄 インデックス更新通知を受信 - 再読み込みを実行中...")
+            
+            reload_results = []
+            for name, retriever in self.index_manager.retrievers.items():
+                try:
+                    if hasattr(retriever, 'load_index'):
+                        success = retriever.load_index()
+                        reload_results.append((name, success))
+                        if success:
+                            self.logger.info(f"✅ {name}インデックス再読み込み成功")
+                        else:
+                            self.logger.warning(f"⚠️ {name}インデックス再読み込み失敗")
+                except Exception as e:
+                    self.logger.error(f"❌ {name}インデックス再読み込みエラー: {e}")
+                    reload_results.append((name, False))
+            
+            # キャッシュをクリア
+            self._clear_search_cache()
+            
+            # 統計更新
+            self.search_stats['index_reload_count'] += 1
+            
+            successful_reloads = sum(1 for _, success in reload_results if success)
+            total_retrievers = len(reload_results)
+            
+            self.logger.info(f"🎯 インデックス再読み込み完了: {successful_reloads}/{total_retrievers}個成功")
+            
+        except Exception as e:
+            self.logger.error(f"❌ インデックス更新処理エラー: {e}")
+    
+    def _check_index_updates_periodically(self) -> bool:
+        """
+        定期的にインデックス更新をチェックします。
+        
+        Returns:
+            bool: 更新があった場合True
+        """
+        current_time = time.time()
+        
+        # チェック間隔に達していない場合はスキップ
+        if current_time - self.last_global_check_time < self.index_check_interval:
+            return False
+        
+        self.last_global_check_time = current_time
+        
+        try:
+            updated = False
+            
+            for name, retriever in self.index_manager.retrievers.items():
+                # インデックスファイルの最終更新時刻をチェック
+                index_info = retriever.get_index_info()
+                
+                # BM25の場合はインデックスファイル、Vectorの場合はDBディレクトリ
+                if name == 'bm25' and 'index_file' in index_info:
+                    index_path = Path(index_info['index_file'])
+                    if index_path.exists():
+                        file_mtime = index_path.stat().st_mtime
+                        last_check = self.last_index_check_time.get(name, 0)
+                        
+                        if file_mtime > last_check:
+                            self.logger.info(f"📊 {name}インデックス更新検知: ファイル更新時刻 {file_mtime}")
+                            updated = True
+                            self.last_index_check_time[name] = file_mtime
+                
+                elif name == 'vector' and 'db_path' in index_info:
+                    db_path = Path(index_info['db_path'])
+                    if db_path.exists():
+                        # データベースディレクトリの最終更新時刻をチェック
+                        dir_mtime = max(p.stat().st_mtime for p in db_path.rglob('*') if p.is_file())
+                        last_check = self.last_index_check_time.get(name, 0)
+                        
+                        if dir_mtime > last_check:
+                            self.logger.info(f"📊 {name}インデックス更新検知: DB更新時刻 {dir_mtime}")
+                            updated = True
+                            self.last_index_check_time[name] = dir_mtime
+            
+            if updated:
+                self.logger.info("🔄 インデックス更新検知 - 自動再読み込みを実行します")
+                self._handle_index_update()
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"インデックス更新チェックエラー: {e}")
+            return False
+    
+    def _clear_search_cache(self) -> None:
+        """
+        検索結果キャッシュをクリアします。
+        """
+        with self.cache_lock:
+            cleared_count = len(self.result_cache)
+            self.result_cache.clear()
+            if cleared_count > 0:
+                self.logger.info(f"🧹 検索キャッシュをクリアしました: {cleared_count}件")
+    
+    def set_auto_reload(self, enabled: bool) -> None:
+        """
+        インデックス自動再読み込み機能を設定します。
+        
+        Args:
+            enabled (bool): 有効にする場合True
+        """
+        self.auto_reload_enabled = enabled
+        status = "有効" if enabled else "無効"
+        self.logger.info(f"🔄 インデックス自動再読み込み: {status}")
+    
+    def force_index_reload(self) -> Dict[str, bool]:
+        """
+        インデックスの強制再読み込みを実行します。
+        
+        Returns:
+            Dict[str, bool]: リトリーバー別の再読み込み結果
+        """
+        self.logger.info("🔄 インデックス強制再読み込みを開始します")
+        
+        results = {}
+        for name, retriever in self.index_manager.retrievers.items():
+            try:
+                success = retriever.load_index()
+                results[name] = success
+                
+                if success:
+                    self.logger.info(f"✅ {name}インデックス再読み込み成功")
+                else:
+                    self.logger.warning(f"⚠️ {name}インデックス再読み込み失敗")
+                    
+            except Exception as e:
+                self.logger.error(f"❌ {name}インデックス再読み込みエラー: {e}")
+                results[name] = False
+        
+        # キャッシュクリア
+        self._clear_search_cache()
+        
+        # 統計更新
+        self.search_stats['index_reload_count'] += 1
+        
+        successful = sum(1 for success in results.values() if success)
+        total = len(results)
+        self.logger.info(f"🎯 強制再読み込み完了: {successful}/{total}個成功")
+        
+        return results
     
     def search_hybrid(self, query: str, k: int = None, 
                      bm25_weight: float = 1.0, vector_weight: float = 1.0,
@@ -82,6 +314,9 @@ class HybridSearchEngine(HybridBaseSystem):
             k = config.FINAL_RESULT_COUNT
         if enable_cache is None:
             enable_cache = config.ENABLE_RESULT_CACHE
+        
+        # インデックス更新チェック（定期的）
+        self._check_index_updates_periodically()
         
         start_time = time.time()
         
@@ -528,6 +763,7 @@ class HybridSearchEngine(HybridBaseSystem):
         print(f"平均応答時間: {self.search_stats['average_response_time']:.3f}秒")
         if self.search_stats['last_search_time']:
             print(f"最終検索: {time.ctime(self.search_stats['last_search_time'])}")
+        print(f"インデックス再読み込み回数: {self.search_stats['index_reload_count']}")
     
     def _show_system_status(self) -> None:
         """
