@@ -19,6 +19,11 @@ pandas>=1.5.0
 # File System Monitoring
 watchdog>=2.1.0
 
+# MCP Server Dependencies
+fastmcp
+uvicorn>=0.24.0
+fastapi>=0.104.0
+
 
 # Additional utilities
 tqdm>=4.64.0  # Progress bars for batch processing
