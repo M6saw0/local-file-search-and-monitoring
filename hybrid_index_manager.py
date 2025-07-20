@@ -70,6 +70,9 @@ class HybridIndexManager(HybridBaseSystem):
             'last_update': None
         }
         
+        # インデックス更新通知システム
+        self.update_notifier = None
+        
         self.logger.info("HybridIndexManager初期化完了")
     
     def _initialize_retrievers(self) -> None:
@@ -135,10 +138,17 @@ class HybridIndexManager(HybridBaseSystem):
             self.document_processor.log_processing_stats(processed_docs)
             
             # 各検索エンジンにドキュメントを追加
+            self.logger.info(f"📚 初期インデックス構築: {len(processed_docs)}件のドキュメントを追加中...")
             self._add_documents_to_all_retrievers(processed_docs)
             
             # インデックスを再構築
+            self.logger.info("🔧 インデックス再構築を実行中...")
             self._rebuild_all_indices()
+            
+            # 各インデックスの最終状態をログ出力
+            for name, retriever in self.retrievers.items():
+                doc_count = retriever.get_document_count()
+                self.logger.info(f"📊 {name}インデックス最終状態: {doc_count}件の文書")
             
             # 統計更新
             self.stats['files_processed'] += len(processed_docs)
@@ -261,18 +271,24 @@ class HybridIndexManager(HybridBaseSystem):
                 return
             self.processing_queue.add(file_path)
         
+        self.logger.info(f"📄 ファイル処理開始: {file_path.name}")
+        
         try:
             # ファイルを処理
             processed_doc = self.document_processor.process_file(file_path)
             
             if processed_doc:
-                # 既存ドキュメントかチェック
                 doc_id = processed_doc.doc_id
-                is_update = any(
-                    retriever.get_document_count() > 0 and 
-                    retriever.remove_document(doc_id)
-                    for retriever in self.retrievers.values()
-                )
+                self.logger.info(f"📋 ドキュメント処理完了: {doc_id}")
+                
+                # 既存ドキュメントのチェックと削除
+                is_update = False
+                for name, retriever in self.retrievers.items():
+                    doc_count_before = retriever.get_document_count()
+                    if doc_count_before > 0 and retriever.remove_document(doc_id):
+                        doc_count_after = retriever.get_document_count()
+                        self.logger.info(f"🗑️  {name}から既存文書削除: {doc_id} (文書数: {doc_count_before} → {doc_count_after})")
+                        is_update = True
                 
                 # 全ての検索エンジンに追加
                 success = self._add_document_to_all_retrievers(processed_doc)
@@ -282,14 +298,26 @@ class HybridIndexManager(HybridBaseSystem):
                     self.stats['files_processed'] += 1
                     if is_update:
                         self.stats['files_updated'] += 1
+                        self.logger.info(f"✅ ファイル更新完了: {file_path.name}")
                     else:
                         self.stats['files_added'] += 1
+                        self.logger.info(f"✅ ファイル追加完了: {file_path.name}")
                     self.stats['last_update'] = time.time()
                     
-                    self.logger.debug(f"ファイル処理完了: {file_path.name}")
+                    # インデックスを保存（自動保存が有効な場合）
+                    if config.ENABLE_AUTOSAVE:
+                        self.save_all_indices()
+                    
+                    # インデックス更新通知を送信
+                    for name in self.retrievers.keys():
+                        self._notify_index_update(name)
+                else:
+                    self.logger.error(f"❌ ファイル処理失敗: {file_path.name}")
+            else:
+                self.logger.warning(f"⚠️  ファイル処理スキップ（非対応形式）: {file_path.name}")
                 
         except Exception as e:
-            self.logger.error(f"ファイル処理エラー {file_path}: {e}")
+            self.logger.error(f"❌ ファイル処理エラー {file_path.name}: {e}")
         
         finally:
             # 処理キューから削除
@@ -303,22 +331,39 @@ class HybridIndexManager(HybridBaseSystem):
         Args:
             file_path (Path): 削除するファイルパス
         """
+        self.logger.info(f"🗑️  ファイル削除開始: {file_path.name}")
+        
         try:
             doc_id = str(file_path)
             
-            # 全ての検索エンジンから削除
-            removed = False
-            for retriever in self.retrievers.values():
+            # 各検索エンジンから削除
+            removed_count = 0
+            for name, retriever in self.retrievers.items():
+                doc_count_before = retriever.get_document_count()
                 if retriever.remove_document(doc_id):
-                    removed = True
+                    doc_count_after = retriever.get_document_count()
+                    self.logger.info(f"🗑️  {name}から文書削除成功: {doc_id} (文書数: {doc_count_before} → {doc_count_after})")
+                    removed_count += 1
+                else:
+                    self.logger.debug(f"🔍 {name}に削除対象文書なし: {doc_id}")
             
-            if removed:
+            if removed_count > 0:
                 self.stats['files_removed'] += 1
                 self.stats['last_update'] = time.time()
-                self.logger.debug(f"ファイル削除完了: {file_path.name}")
+                self.logger.info(f"✅ ファイル削除完了: {file_path.name} ({removed_count}/{len(self.retrievers)}個のインデックスから削除)")
+                
+                # インデックスを保存（自動保存が有効な場合）
+                if config.ENABLE_AUTOSAVE:
+                    self.save_all_indices()
+                
+                # インデックス更新通知を送信
+                for name in self.retrievers.keys():
+                    self._notify_index_update(name)
+            else:
+                self.logger.warning(f"⚠️  削除対象ファイルがインデックスに見つかりません: {file_path.name}")
             
         except Exception as e:
-            self.logger.error(f"ファイル削除エラー {file_path}: {e}")
+            self.logger.error(f"❌ ファイル削除エラー {file_path.name}: {e}")
     
     def _add_document_to_all_retrievers(self, processed_doc) -> bool:
         """
@@ -331,15 +376,26 @@ class HybridIndexManager(HybridBaseSystem):
             bool: 全て成功した場合True
         """
         success = True
+        successful_additions = 0
         
         for name, retriever in self.retrievers.items():
             try:
-                if not retriever.add_document(processed_doc):
-                    self.logger.warning(f"{name}への文書追加に失敗: {processed_doc.file_path}")
+                doc_count_before = retriever.get_document_count()
+                if retriever.add_document(processed_doc):
+                    doc_count_after = retriever.get_document_count()
+                    self.logger.info(f"➕ {name}への文書追加成功: {processed_doc.file_path.name} (文書数: {doc_count_before} → {doc_count_after})")
+                    successful_additions += 1
+                else:
+                    self.logger.warning(f"⚠️  {name}への文書追加失敗: {processed_doc.file_path.name}")
                     success = False
             except Exception as e:
-                self.logger.error(f"{name}への文書追加エラー: {e}")
+                self.logger.error(f"❌ {name}への文書追加エラー: {processed_doc.file_path.name} - {e}")
                 success = False
+        
+        if success:
+            self.logger.info(f"✅ 全インデックスへの追加完了: {processed_doc.file_path.name} ({successful_additions}/{len(self.retrievers)}個のインデックス)")
+        else:
+            self.logger.error(f"❌ インデックス追加で一部失敗: {processed_doc.file_path.name} ({successful_additions}/{len(self.retrievers)}個成功)")
         
         return success
     
@@ -394,16 +450,25 @@ class HybridIndexManager(HybridBaseSystem):
         Returns:
             Dict: システム状態情報
         """
+        self.logger.info("📈 システム状態チェック実行中...")
+        
         retriever_status = {}
         for name, retriever in self.retrievers.items():
+            doc_count = retriever.get_document_count()
+            is_ready = retriever.is_ready()
+            
             retriever_status[name] = {
                 'initialized': retriever.is_initialized,
-                'ready': retriever.is_ready(),
-                'document_count': retriever.get_document_count(),
+                'ready': is_ready,
+                'document_count': doc_count,
                 'info': retriever.get_index_info()
             }
+            
+            # 各インデックスの状態をログ出力
+            status_icon = "✅" if is_ready else "❌"
+            self.logger.info(f"📊 {status_icon} {name}インデックス: {doc_count}件の文書, {'準備完了' if is_ready else '未準備'}")
         
-        return {
+        status = {
             'is_watching': self.observer is not None and self.observer.is_alive(),
             'auto_save_enabled': config.ENABLE_AUTOSAVE,
             'processing_queue_size': len(self.processing_queue),
@@ -416,6 +481,11 @@ class HybridIndexManager(HybridBaseSystem):
                 'max_workers': config.MAX_WORKERS
             }
         }
+        
+        # 統計情報もログ出力
+        self.logger.info(f"📊 処理統計: 処理{self.stats['files_processed']}件, 追加{self.stats['files_added']}件, 更新{self.stats['files_updated']}件, 削除{self.stats['files_removed']}件")
+        
+        return status
     
     def get_retriever(self, name: str) -> Optional[BaseRetriever]:
         """
@@ -428,6 +498,30 @@ class HybridIndexManager(HybridBaseSystem):
             Optional[BaseRetriever]: 検索エンジン。見つからない場合はNone
         """
         return self.retrievers.get(name)
+    
+    def set_update_notifier(self, notifier) -> None:
+        """
+        インデックス更新通知システムを設定します。
+        
+        Args:
+            notifier: 更新通知システム
+        """
+        self.update_notifier = notifier
+        self.logger.info("🔔 インデックス更新通知システムを設定しました")
+    
+    def _notify_index_update(self, retriever_name: str) -> None:
+        """
+        インデックス更新を通知します。
+        
+        Args:
+            retriever_name (str): 更新されたリトリーバー名
+        """
+        if self.update_notifier:
+            try:
+                self.update_notifier.notify_update(retriever_name)
+                self.logger.debug(f"📣 インデックス更新通知送信: {retriever_name}")
+            except Exception as e:
+                self.logger.error(f"インデックス更新通知エラー: {e}")
 
 
 class FileChangeHandler(FileSystemEventHandler):
@@ -452,16 +546,19 @@ class FileChangeHandler(FileSystemEventHandler):
     def on_created(self, event):
         """ファイル作成イベント"""
         if not event.is_directory:
+            self.logger.info(f"ファイル作成イベント: {event.src_path}")
             self._schedule_file_change(Path(event.src_path))
     
     def on_modified(self, event):
         """ファイル変更イベント"""
         if not event.is_directory:
+            self.logger.info(f"ファイル変更イベント: {event.src_path}")
             self._schedule_file_change(Path(event.src_path))
     
     def on_deleted(self, event):
         """ファイル削除イベント"""
         if not event.is_directory:
+            self.logger.info(f"ファイル削除イベント: {event.src_path}")
             file_path = Path(event.src_path)
             
             # 保留中の変更をキャンセル
@@ -513,18 +610,27 @@ class FileChangeHandler(FileSystemEventHandler):
         Args:
             file_path (Path): 変更されたファイル
         """
+        self.logger.info(f"🔄 ファイル変更処理開始: {file_path.name}")
+        
         try:
             # ファイルが存在し、サポートされているかチェック
-            if file_path.exists() and self.index_manager.document_processor.is_supported_file(file_path):
-                self.index_manager.add_or_update_file(file_path)
+            if file_path.exists():
+                if self.index_manager.document_processor.is_supported_file(file_path):
+                    self.logger.info(f"📂 サポート形式のファイルを処理: {file_path.name}")
+                    self.index_manager.add_or_update_file(file_path)
+                else:
+                    self.logger.debug(f"🚫 非サポート形式のファイル: {file_path.name}")
+            else:
+                self.logger.warning(f"❓ ファイルが存在しません: {file_path.name}")
         
         except Exception as e:
-            self.logger.error(f"ファイル変更処理エラー {file_path}: {e}")
+            self.logger.error(f"❌ ファイル変更処理エラー {file_path.name}: {e}")
         
         finally:
             # 保留リストから削除
             with self.change_lock:
                 self.pending_changes.pop(file_path, None)
+            self.logger.debug(f"🏁 ファイル変更処理終了: {file_path.name}")
 
 
 def main():

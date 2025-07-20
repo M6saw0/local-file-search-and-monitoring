@@ -8,8 +8,10 @@ BM25検索とベクトル検索両方で使用する基盤機能を統合して�
 import logging
 import threading
 from pathlib import Path
+import queue
 from typing import List, Dict, Tuple, Optional
 import sys
+            
 
 # 外部ライブラリ
 from pdfminer.high_level import extract_text as pdf_extract_text
@@ -111,7 +113,7 @@ class HybridBaseSystem:
     
     def _extract_pdf_text(self, path: Path) -> str:
         """
-        PDFファイルからテキストを抽出します。
+        PDFファイルからテキストを抽出します（クロスプラットフォーム対応）。
         
         Args:
             path (Path): PDFファイルパス
@@ -120,23 +122,41 @@ class HybridBaseSystem:
             str: 抽出されたテキスト
         """
         try:
-            import signal
+            result_queue = queue.Queue()
+            error_queue = queue.Queue()
             
-            def timeout_handler(signum, frame):
-                raise TimeoutError("PDF extraction timeout")
+            def extract_text_thread():
+                try:
+                    result = pdf_extract_text(str(path))
+                    result_queue.put(result)
+                except Exception as e:
+                    error_queue.put(e)
+            
+            # PDFテキスト抽出を別スレッドで実行
+            thread = threading.Thread(target=extract_text_thread)
+            thread.daemon = True
+            thread.start()
             
             # タイムアウト設定
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(config.PDF_EXTRACTION_TIMEOUT)
+            thread.join(timeout=config.PDF_EXTRACTION_TIMEOUT)
             
-            try:
-                text = pdf_extract_text(str(path))
-                signal.alarm(0)  # タイムアウト解除
-                return text
-            except TimeoutError:
-                self.logger.warning(f"PDFテキスト抽出がタイムアウトしました: {path}")
+            if thread.is_alive():
+                self.logger.warning(f"PDFテキスト抽出がタイムアウトしました ({config.PDF_EXTRACTION_TIMEOUT}秒): {path}")
                 return ""
             
+            # エラーがあるかチェック
+            if not error_queue.empty():
+                raise error_queue.get()
+            
+            # 結果を取得
+            if not result_queue.empty():
+                extracted_text = result_queue.get()
+                self.logger.info(f"PDFテキスト抽出完了 ({len(extracted_text)}文字): {path}")
+                return extracted_text
+            else:
+                self.logger.warning(f"PDFテキスト抽出結果が空でした: {path}")
+                return ""
+                
         except Exception as e:
             self.logger.error(f"PDF抽出エラー {path}: {e}")
             return ""
@@ -220,10 +240,11 @@ class ProcessedDocument:
             text (str): 抽出されたテキスト
             metadata (Dict, optional): メタデータ
         """
-        self.file_path = file_path
+        # ファイルパスを絶対パスに変換
+        self.file_path = file_path.resolve()
         self.text = text
         self.metadata = metadata or {}
-        self.doc_id = str(file_path)  # ファイルパスをIDとして使用
+        self.doc_id = str(self.file_path)  # 絶対パスをIDとして使用
         
         # 基本的なメタデータを設定
         self.metadata.update({

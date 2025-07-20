@@ -201,17 +201,23 @@ class BM25Retriever(BaseRetriever, HybridBaseSystem):
                 
                 # コーパスに追加（既存ドキュメントがあれば更新）
                 doc_id = str(document.file_path)
+                is_update = False
                 if doc_id in [str(p) for p in self.paths]:
                     # 既存ドキュメントを更新
                     index = [str(p) for p in self.paths].index(doc_id)
                     self.corpus[index] = tokens
+                    is_update = True
                 else:
                     # 新しいドキュメントを追加
                     self.paths.append(document.file_path)
                     self.corpus.append(tokens)
                     self.document_count += 1
                 
-                self.logger.debug(f"ドキュメント追加: {document.file_path.name}")
+                # インデックスを再構築
+                self._rebuild_index()
+                
+                action = "更新" if is_update else "追加"
+                self.logger.debug(f"ドキュメント{action}: {document.file_path.name}")
                 return True
                 
         except Exception as e:
@@ -242,6 +248,9 @@ class BM25Retriever(BaseRetriever, HybridBaseSystem):
                     del self.paths[index]
                     del self.corpus[index]
                     self.document_count = max(0, self.document_count - 1)
+                    
+                    # インデックスを再構築
+                    self._rebuild_index()
                     
                     self.logger.debug(f"ドキュメント削除: {doc_path.name}")
                     return True

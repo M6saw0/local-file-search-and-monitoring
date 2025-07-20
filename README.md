@@ -14,6 +14,11 @@ BM25とベクトル検索を組み合わせた日本語文書検索システム�
 - **サポートファイル形式**: txt, md, pdf
 - **並列処理**: 効率的な大量ファイル処理
 
+### MCP対応
+- **Claude Desktop連携**: Model Context Protocol（MCP）でAIアシスタントと直接連携
+- **FastMCPサーバー**: HTTP経由でのハイブリッド検索機能提供
+- **ファイル全文取得**: 検索結果からファイルの完全な内容を取得可能
+
 ### モジュラー設計
 - **拡張容易性**: 新しい検索エンジンやリランカーの追加が簡単
 - **統合設定**: 単一ファイルでシステム全体を制御
@@ -31,110 +36,115 @@ BM25とベクトル検索を組み合わせた日本語文書検索システム�
 ```
 torch>=2.0.0
 transformers>=4.20.0
-lancedb>=0.3.0
+lancedb>=0.24.1
 bm25s>=0.1.0
 watchdog>=2.1.0
 MeCab-python3>=1.0.0
 pdfminer.six>=20211012
+fastmcp>=0.1.0
 numpy>=1.21.0
 pandas>=1.5.0
 ```
 
 ## 🚀 インストール
 
-### 1. リポジトリのクローン
+### 1. リポジトリのクローンと環境設定
 ```bash
 git clone <repository-url>
 cd hybrid-search-system
-```
-
-### 2. 仮想環境の作成
-```bash
 python -m venv venv
+
 # Windows
 venv\Scripts\activate
 # macOS/Linux  
 source venv/bin/activate
 ```
 
-### 3. 依存関係のインストール
+### 2. 依存関係のインストール
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. MeCab辞書のインストール
-**Windows:**
-```bash
-# MeCabをダウンロード・インストール
-# https://taku910.github.io/mecab/ から入手
-```
-
-**macOS:**
-```bash
-brew install mecab mecab-ipadic
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt install mecab mecab-ipadic-utf8 libmecab-dev
-```
+### 3. MeCab辞書のインストール
+**Windows**: https://taku910.github.io/mecab/ からインストール
+**macOS**: `brew install mecab mecab-ipadic`
+**Ubuntu/Debian**: `sudo apt install mecab mecab-ipadic-utf8 libmecab-dev`
 
 ## 📖 使用方法
 
-### 基本的な使用手順
+### 基本的な検索システム
 
-#### 1. 設定の確認
-```bash
-python core/hybrid_config.py
-```
-設定内容を確認し、必要に応じて`core/hybrid_config.py`を編集してください。
-
-#### 2. インデックス管理システムの起動
+#### 1. インデックス管理システムの起動
 ```bash
 python hybrid_index_manager.py
 ```
-このコマンドで以下が実行されます：
-- ファイルの初期スキャンとインデックス作成
-- リアルタイムファイル監視の開始
-- BM25とベクトル検索両方のインデックス管理
+ファイルの初期スキャン、インデックス作成、リアルタイムファイル監視を開始します。
 
-#### 3. 検索エンジンの起動（別ターミナル）
+#### 2. 検索エンジンの起動（別ターミナル）
 ```bash
 python hybrid_search_engine.py
 ```
+
+### MCPサーバーとしての使用
+
+#### 1. MCPサーバー起動
+```bash
+# デフォルト設定（localhost:8000）
+python hybrid_search_mcp_server.py
+
+# ホストとポートを指定
+python hybrid_search_mcp_server.py --host 0.0.0.0 --port 9000
+
+# 外部からの接続を許可（すべてのインターフェース）
+python hybrid_search_mcp_server.py --host 0.0.0.0
+
+# カスタムポートで起動
+python hybrid_search_mcp_server.py -p 8080
+```
+FastMCP HTTPサーバーが起動し、指定されたhost:portでMCPクライアントからの接続を待機します。
+
+#### 2. VSCodeでの使用
+`settings.json` に以下を追加：
+```json
+{
+  "mcpServers": {
+    "local-file-hybrid-search": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+#### 3. 利用可能なMCPツール
+
+**`hybrid_search`**: ハイブリッド検索実行
+- `query` (必須): 検索クエリ
+- `mode`: 検索モード ("hybrid", "bm25", "vector") 
+- `max_results`: 最大結果数 (1-50)
+- `bm25_weight`: BM25検索の重み (0.1-2.0)
+- `vector_weight`: ベクトル検索の重み (0.1-2.0)
+
+**`get_file_content`**: ファイル全文取得
+- `file_path` (必須): ファイルパス（相対・絶対パス対応）
 
 ### インタラクティブ検索
 
 検索エンジンを起動すると、以下のコマンドが使用できます：
 
 ```
-検索> 機械学習
-  → ハイブリッド検索（BM25 + ベクトル検索 + RRF統合）
-
-検索> bm25:自然言語処理
-  → BM25検索のみ
-
-検索> vector:深層学習
-  → ベクトル検索のみ
-
-検索> compare:人工知能
-  → 全手法を比較（BM25、ベクトル、ハイブリッド）
-
-検索> stats
-  → 検索統計の表示
-
-検索> status  
-  → システム状態の表示
-
-検索> exit
-  → 終了
+検索> 機械学習          → ハイブリッド検索
+検索> bm25:自然言語処理  → BM25検索のみ
+検索> vector:深層学習    → ベクトル検索のみ
+検索> compare:人工知能   → 全手法比較
+検索> stats             → 検索統計表示
+検索> exit              → 終了
 ```
 
 ## ⚙️ 設定
 
 ### 主要設定項目（core/hybrid_config.py）
 
-#### 共通設定
 ```python
 # 監視対象ディレクトリ
 WATCH_DIRECTORY = Path("input")
@@ -142,44 +152,19 @@ WATCH_DIRECTORY = Path("input")
 # サポートファイル拡張子
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf"}
 
-# ログレベル
-LOG_LEVEL = "INFO"
-```
-
-#### BM25検索設定
-```python
 # BM25パラメータ
 BM25_K1 = 1.5          # Term frequency saturation
 BM25_B = 0.75          # Length normalization
 
-# スコア閾値
-BM25_MIN_SCORE_THRESHOLD = 0.1
-```
-
-#### ベクトル検索設定
-```python
-# 埋め込みモデル
+# ベクトル検索設定
 EMBEDDING_MODEL_NAME = "retrieva-jp/amber-base"
-EMBEDDING_DIMENSION = 512
-
-# チャンク分割
 CHUNK_SIZE = 500       # チャンクサイズ（文字数）
 CHUNK_OVERLAP = 100    # オーバーラップサイズ
 
-# 類似度閾値
-MIN_SIMILARITY_THRESHOLD = 0.3
-```
-
-#### ハイブリッド検索設定
-```python
-# 並列検索
+# ハイブリッド検索設定
 ENABLE_PARALLEL_SEARCH = True
-
-# 結果統合
-MAX_CANDIDATES_PER_RETRIEVER = 20  # 各検索エンジンからの候補数
-FINAL_RESULT_COUNT = 10            # 最終結果数
-
-# RRFパラメータ
+MAX_CANDIDATES_PER_RETRIEVER = 20
+FINAL_RESULT_COUNT = 10
 RRF_K = 60  # RRFパラメータ（推奨値）
 ```
 
@@ -189,102 +174,67 @@ RRF_K = 60  # RRFパラメータ（推奨値）
 ```
 hybrid-search-system/
 ├── core/                          # 共通基盤
-│   ├── hybrid_config.py          # 統合設定
-│   ├── base_system.py            # 基盤クラス
-│   └── document_processor.py     # ドキュメント処理
-│
-├── retrievers/                   # 検索エンジン
-│   ├── base_retriever.py        # 抽象基底クラス
-│   ├── bm25_retriever.py        # BM25検索エンジン
-│   └── vector_retriever.py      # ベクトル検索エンジン
-│
-├── rerankers/                    # リランカー
-│   ├── base_reranker.py         # 抽象基底クラス
-│   └── rrf_reranker.py          # RRFリランカー
-│
-├── hybrid_index_manager.py       # インデックス管理システム
-├── hybrid_search_engine.py       # 検索エンジンシステム
-│
-├── input/                        # 検索対象ファイル（監視対象）
-├── index/                        # BM25インデックス
-├── vector_db/                    # ベクトルデータベース
-└── logs/                         # ログファイル
+├── retrievers/                    # 検索エンジン
+├── rerankers/                     # リランカー
+├── hybrid_index_manager.py        # インデックス管理システム
+├── hybrid_search_engine.py        # 検索エンジンシステム
+├── hybrid_search_mcp_server.py    # MCPサーバー
+├── input/                         # 検索対象ファイル
+├── index/                         # BM25インデックス
+├── vector_db/                     # ベクトルデータベース
+└── logs/                          # ログファイル
 ```
 
 ### コンポーネント構成
 
 #### 1. インデックス管理システム（HybridIndexManager）
-- **ファイル監視**: watchdogによるリアルタイム監視
-- **インデックス更新**: BM25とベクトル検索両方を自動更新
-- **並列処理**: 効率的な大量ファイル処理
-- **自動保存**: 定期的なインデックス保存
+- watchdogによるリアルタイムファイル監視
+- BM25とベクトル検索の自動インデックス更新
+- 並列処理による効率的な大量ファイル処理
 
 #### 2. 検索エンジン（HybridSearchEngine）
-- **並列検索**: BM25とベクトル検索を同時実行
-- **結果統合**: RRFリランカーによる最適統合
-- **キャッシュ機能**: 検索結果の高速化
-- **分析機能**: 検索パフォーマンスの詳細分析
+- BM25とベクトル検索の並列実行
+- RRFリランカーによる結果統合
+- キャッシュ機能による高速化
 
-#### 3. 検索エンジンモジュール
-- **BM25Retriever**: MeCab + bm25sによる形態素解析検索
-- **VectorRetriever**: AMBER + LanceDBによるベクトル検索
-- **統一インターフェース**: BaseRetrieverによる共通API
-
-#### 4. リランカーシステム
-- **RRFReranker**: 業界標準のRRF（Reciprocal Rank Fusion）実装
-- **重み調整**: 検索エンジンごとの重み設定
-- **拡張可能**: 新しいリランキング手法の追加が容易
+#### 3. MCPサーバー（HybridSearchMCPServer）
+- FastMCPによるHTTP APIサーバー
+- Claude Desktop等との連携インターフェース
+- インデックス自動監視・再読み込み機能
 
 ## 🔧 開発・拡張
 
 ### 新しい検索エンジンの追加
 
-1. `BaseRetriever`を継承したクラスを作成：
+`BaseRetriever`を継承したクラスを作成し、`HybridIndexManager`に登録：
+
 ```python
 from retrievers.base_retriever import BaseRetriever
 
 class CustomRetriever(BaseRetriever):
-    def __init__(self):
-        super().__init__("Custom")
-    
-    def initialize(self) -> bool:
-        # 初期化処理
-        
     def search(self, query: str, k: int = 10) -> List[SearchResult]:
-        # 検索処理
-```
-
-2. `HybridIndexManager`に登録：
-```python
-custom_retriever = CustomRetriever()
-if custom_retriever.initialize():
-    self.retrievers['custom'] = custom_retriever
+        # 検索処理の実装
+        pass
 ```
 
 ### 新しいリランカーの追加
 
-1. `BaseReranker`を継承したクラスを作成：
+`BaseReranker`を継承したクラスを作成し、設定で指定：
+
 ```python
 from rerankers.base_reranker import BaseReranker
 
 class CustomReranker(BaseReranker):
-    def __init__(self):
-        super().__init__("Custom")
-    
     def rerank(self, retrieval_results, query="", k=10):
-        # リランキング処理
-```
-
-2. 設定でリランカータイプを変更：
-```python
-RERANKER_TYPE = "custom"
+        # リランキング処理の実装
+        pass
 ```
 
 ## 📊 パフォーマンス
 
 ### ベンチマーク例（参考値）
 - **BM25検索**: ~50ms（1万文書）
-- **ベクトル検索**: ~100ms（1万文書）
+- **ベクトル検索**: ~100ms（1万文書）  
 - **ハイブリッド検索**: ~120ms（並列実行）
 - **インデックス更新**: ~500ms/文書（PDF）
 
@@ -297,39 +247,17 @@ RERANKER_TYPE = "custom"
 
 ### よくある問題
 
-#### MeCabエラー
-```
-ImportError: No module named 'MeCab'
-```
-**解決方法**: MeCabを正しくインストールしてください（インストール手順参照）
-
-#### LanceDBエラー
-```
-ModuleNotFoundError: No module named 'lancedb'
-```
-**解決方法**: 
-```bash
-pip install lancedb>=0.3.0
-```
-
-#### GPU使用時のエラー
-```
-RuntimeError: CUDA out of memory
-```
-**解決方法**: 設定で`DEVICE = "cpu"`に変更するか、`BATCH_SIZE`を小さくしてください
-
-#### ファイル監視が動作しない
-**確認事項**:
-- `WATCH_DIRECTORY`が存在するか
-- ファイル権限が適切か
-- サポート対象の拡張子か（.txt, .md, .pdf）
+**MeCabエラー**: MeCabを正しくインストールしてください
+**LanceDBエラー**: `pip install lancedb>=0.24.1`
+**GPUメモリエラー**: 設定で`DEVICE = "cpu"`に変更
+**ファイル監視の問題**: `WATCH_DIRECTORY`の存在確認、権限確認
 
 ### ログの確認
 ```bash
 # システムログの確認
 tail -f logs/hybrid_system.log
 
-# デバッグモードでの実行
+# デバッグモードでの実行  
 LOG_LEVEL = "DEBUG"  # hybrid_config.pyで設定
 ```
 
@@ -337,37 +265,36 @@ LOG_LEVEL = "DEBUG"  # hybrid_config.pyで設定
 
 ### HybridSearchEngine
 
-#### search_hybrid(query, k=10, bm25_weight=1.0, vector_weight=1.0)
-ハイブリッド検索を実行
-
-**パラメータ**:
-- `query`: 検索クエリ
-- `k`: 返す結果数
-- `bm25_weight`: BM25結果の重み
-- `vector_weight`: ベクトル結果の重み
-
-**戻り値**: `List[SearchResult]`
-
-#### search_bm25_only(query, k=10)
-BM25検索のみを実行
-
-#### search_vector_only(query, k=10)  
-ベクトル検索のみを実行
-
-#### compare_search_methods(query, k=10)
-検索手法を比較
+- `search_hybrid(query, k=10, bm25_weight=1.0, vector_weight=1.0)`: ハイブリッド検索実行
+- `search_bm25_only(query, k=10)`: BM25検索のみ実行
+- `search_vector_only(query, k=10)`: ベクトル検索のみ実行
+- `compare_search_methods(query, k=10)`: 検索手法比較
 
 ### HybridIndexManager
 
-#### initialize_indices()
-初期インデックスを作成
+- `initialize_indices()`: 初期インデックス作成
+- `start_file_watching()`: ファイル監視開始
+- `get_system_status()`: システム状態取得
 
-#### start_file_watching()
-ファイル監視を開始
+## 🧪 テスト
 
-#### get_system_status()
-システム状態を取得
+### MCPクライアントテスト
+```bash
+# 基本テスト（デフォルト: localhost:8000）
+python mcp_client_test.py
 
+# ファイル内容取得テスト
+python mcp_client_test.py --file-path <ファイルパス>
+
+# カスタムクエリテスト  
+python mcp_client_test.py --query "機械学習" --mode hybrid
+
+# カスタムサーバーに接続してテスト
+python mcp_client_test.py --host 0.0.0.0 --port 9000
+
+# 組み合わせ例
+python mcp_client_test.py --host 192.168.1.100 --port 8080 --query "Python" --file-path <ファイルパス>
+```
 
 ## 📄 ライセンス
 
@@ -380,17 +307,7 @@ BM25検索のみを実行
 - **retrieva-jp/amber-base**: 高品質日本語埋め込みモデル
 - **MeCab**: 日本語形態素解析
 - **watchdog**: ファイルシステム監視
-
----
-
-## 更新履歴
-
-### v1.0.1
-- ハイブリッド検索システムの初期リリース
-- BM25とベクトル検索の統合
-- RRFリランカーによる結果統合
-- リアルタイムファイル監視機能
-- インタラクティブ検索インターフェース
+- **FastMCP**: Model Context Protocol実装
 
 ---
 
