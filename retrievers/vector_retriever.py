@@ -11,6 +11,7 @@ import numpy as np
 import lancedb
 import pandas as pd
 from pathlib import Path
+import pyarrow as pa
 from typing import List, Dict, Optional
 from transformers import AutoTokenizer, AutoModel
 
@@ -109,21 +110,36 @@ class VectorRetriever(BaseRetriever, HybridBaseSystem):
         """
         空のテーブルを作成します。
         """
-        # ダミーデータでテーブル作成
-        dummy_data = pd.DataFrame({
-            'doc_id': ['dummy'],
-            'file_path': [str(Path('dummy.txt'))],
-            'chunk_id': [0],
-            'text': ['dummy text'],
-            'vector': [np.zeros(config.EMBEDDING_DIMENSION)]
-        })
+        # スキーマ定義
+        schema = pa.schema([
+            pa.field('doc_id', pa.string()),
+            pa.field('file_path', pa.string()),
+            pa.field('chunk_id', pa.int64()),
+            pa.field('text', pa.string()),
+            pa.field('vector', pa.list_(pa.float32(), config.EMBEDDING_DIMENSION))
+        ])
         
-        # テーブル作成
-        self.table = self.db.create_table(self.table_name, dummy_data)
-        
-        # ダミーデータを削除
-        self.table.delete("doc_id = 'dummy'")
+        # 空テーブル作成
+        self.table = self.db.create_table(self.table_name, schema=schema)
         self.document_count = 0
+
+    def _is_table_valid(self) -> bool:
+        """
+        テーブルが有効で操作可能かどうかをチェック
+        
+        Returns:
+            bool: テーブルが有効な場合True
+        """
+        if self.table is None:
+            return False
+        
+        try:
+            # 基本的な操作が可能かテスト
+            self.table.count_rows()
+            return True
+        except Exception as e:
+            self.logger.warning(f"テーブルが無効になっています: {e}")
+            return False
     
     def search(self, query: str, k: int = 10) -> List[SearchResult]:
         """
@@ -140,8 +156,8 @@ class VectorRetriever(BaseRetriever, HybridBaseSystem):
             self.logger.warning("無効なクエリです")
             return []
         
-        if not self.table:
-            self.logger.warning("テーブルが初期化されていません")
+        if not self._is_table_valid():
+            self.logger.error("テーブルが初期化されていないか無効です")
             return []
         
         try:
