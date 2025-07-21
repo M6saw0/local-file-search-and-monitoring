@@ -4,6 +4,8 @@
 torch>=2.0.0
 transformers>=4.20.0
 numpy>=1.21.0
+protobuf
+sentencepiece
 
 # Search Engines
 bm25s>=0.1.0
