@@ -293,7 +293,7 @@ python mcp_client_test.py --query "機械学習" --mode hybrid
 python mcp_client_test.py --host 0.0.0.0 --port 9000
 
 # 組み合わせ例
-python mcp_client_test.py --host 192.168.1.100 --port 8080 --query "Python" --file-path <ファイルパス>
+python mcp_client_test.py --host 0.0.0.0 --port 8080 --query "Python" --file-path <ファイルパス>
 ```
 
 ## 📄 ライセンス
